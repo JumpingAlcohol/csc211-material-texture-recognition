@@ -1,0 +1,6 @@
+# Reproducible archive; share it outside Git if needed.
+FMD_split.zip
+
+# Operating-system metadata
+Thumbs.db
+Desktop.ini
