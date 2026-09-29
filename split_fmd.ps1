@@ -1,19 +1,28 @@
 param(
-    [string]$SourceRoot = (Join-Path $PSScriptRoot "FMD\\image"),
+    [string]$SourceRoot = (Join-Path $PSScriptRoot "FMD"),
     [string]$OutputRoot = (Join-Path $PSScriptRoot "FMD_split")
 )
 
-$classes = Get-ChildItem -LiteralPath $SourceRoot -Directory | Sort-Object Name
-if ($classes.Count -ne 10) {
-    throw "Expected 10 material-class folders in $SourceRoot; found $($classes.Count)."
-}
+# Fixed CSC211 project scope: five material classes, 95 training and 5 test images per class.
+$classes = @("leather", "metal", "stone", "water", "wood")
+$testPerClass = 5
+
 if (Test-Path -LiteralPath $OutputRoot) {
     throw "Output folder already exists: $OutputRoot. Refusing to overwrite an existing split."
 }
 
+foreach ($class in $classes) {
+    foreach ($kind in @("image", "mask")) {
+        $classPath = Join-Path $SourceRoot "$kind\\$class"
+        if (-not (Test-Path -LiteralPath $classPath)) {
+            throw "Missing source folder: $classPath"
+        }
+    }
+}
+
 New-Item -ItemType Directory -Path $OutputRoot | Out-Null
-foreach ($split in @("train", "validation", "test_blinded", "metadata")) {
-    New-Item -ItemType Directory -Path (Join-Path $OutputRoot $split) | Out-Null
+foreach ($path in @("train\\image", "train\\mask", "test\\image", "test\\mask", "metadata")) {
+    New-Item -ItemType Directory -Path (Join-Path $OutputRoot $path) | Out-Null
 }
 
 $allRows = @()
@@ -21,49 +30,58 @@ $testRows = @()
 $testNumber = 1
 
 foreach ($class in $classes) {
-    $images = Get-ChildItem -LiteralPath $class.FullName -File -Filter "*.jpg" |
+    $imageDirectory = Join-Path $SourceRoot "image\\$class"
+    $maskDirectory = Join-Path $SourceRoot "mask\\$class"
+    $images = Get-ChildItem -LiteralPath $imageDirectory -File -Filter "*.jpg" |
         ForEach-Object {
             $hashBytes = [System.Security.Cryptography.SHA256]::HashData(
-                [System.Text.Encoding]::UTF8.GetBytes("CSC211-FMD-2026|$($class.Name)|$($_.Name)"))
+                [System.Text.Encoding]::UTF8.GetBytes("CSC211-FMD-five-class-v1|$class|$($_.Name)"))
             [PSCustomObject]@{ File = $_; SortKey = [Convert]::ToHexString($hashBytes) }
         } |
         Sort-Object SortKey
 
     if ($images.Count -ne 100) {
-        throw "Expected 100 images for $($class.Name); found $($images.Count)."
+        throw "Expected 100 images for $class; found $($images.Count)."
+    }
+
+    foreach ($item in $images) {
+        $maskPath = Join-Path $maskDirectory $item.File.Name
+        if (-not (Test-Path -LiteralPath $maskPath)) {
+            throw "Missing mask for image: $($item.File.Name)"
+        }
     }
 
     for ($index = 0; $index -lt $images.Count; $index++) {
         $image = $images[$index].File
-        if ($index -lt 5) {
+        $maskPath = Join-Path $maskDirectory $image.Name
+
+        if ($index -lt $testPerClass) {
             $split = "test"
-            $destinationName = "test_{0:D3}.jpg" -f $testNumber
-            Copy-Item -LiteralPath $image.FullName -Destination (Join-Path $OutputRoot "test_blinded\\$destinationName")
+            $outputName = "test_{0:D3}.jpg" -f $testNumber
+            Copy-Item -LiteralPath $image.FullName -Destination (Join-Path $OutputRoot "test\\image\\$outputName")
+            Copy-Item -LiteralPath $maskPath -Destination (Join-Path $OutputRoot "test\\mask\\$outputName")
             $testRows += [PSCustomObject]@{
-                example_id = [System.IO.Path]::GetFileNameWithoutExtension($destinationName)
-                ground_truth_label = $class.Name
+                example_id = [System.IO.Path]::GetFileNameWithoutExtension($outputName)
+                ground_truth_label = $class
                 original_file = $image.Name
             }
             $testNumber++
-        } elseif ($index -lt 15) {
-            $split = "validation"
-            $destinationName = $image.Name
-            $destinationDirectory = Join-Path $OutputRoot "validation\\$($class.Name)"
-            New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
-            Copy-Item -LiteralPath $image.FullName -Destination (Join-Path $destinationDirectory $destinationName)
         } else {
             $split = "train"
-            $destinationName = $image.Name
-            $destinationDirectory = Join-Path $OutputRoot "train\\$($class.Name)"
-            New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
-            Copy-Item -LiteralPath $image.FullName -Destination (Join-Path $destinationDirectory $destinationName)
+            $outputName = $image.Name
+            $trainImageDirectory = Join-Path $OutputRoot "train\\image\\$class"
+            $trainMaskDirectory = Join-Path $OutputRoot "train\\mask\\$class"
+            New-Item -ItemType Directory -Path $trainImageDirectory -Force | Out-Null
+            New-Item -ItemType Directory -Path $trainMaskDirectory -Force | Out-Null
+            Copy-Item -LiteralPath $image.FullName -Destination (Join-Path $trainImageDirectory $outputName)
+            Copy-Item -LiteralPath $maskPath -Destination (Join-Path $trainMaskDirectory $outputName)
         }
 
         $allRows += [PSCustomObject]@{
             split = $split
-            label = $class.Name
+            label = $class
             original_file = $image.Name
-            output_file = $destinationName
+            output_file = $outputName
         }
     }
 }
@@ -71,10 +89,9 @@ foreach ($class in $classes) {
 $metadata = Join-Path $OutputRoot "metadata"
 $allRows | Export-Csv -LiteralPath (Join-Path $metadata "split_manifest.csv") -NoTypeInformation
 $testRows | Export-Csv -LiteralPath (Join-Path $metadata "test_labels_private.csv") -NoTypeInformation
+$humanTemplate = $testRows | Select-Object example_id, @{Name = "human_prediction"; Expression = { "" }}, @{Name = "notes"; Expression = { "" }}
+$humanTemplate | Export-Csv -LiteralPath (Join-Path $metadata "human_predictions_yuxiang.csv") -NoTypeInformation
+$humanTemplate | Export-Csv -LiteralPath (Join-Path $metadata "human_predictions_ivans.csv") -NoTypeInformation
 
-$headers = "example_id,human_prediction,notes"
-Set-Content -LiteralPath (Join-Path $metadata "human_predictions_yuxiang.csv") -Value $headers
-Set-Content -LiteralPath (Join-Path $metadata "human_predictions_ivans.csv") -Value $headers
-
-Write-Host "Created fixed FMD split at $OutputRoot"
-Write-Host "Train: 850 images; validation: 100 images; blind test: 50 images."
+Write-Host "Created fixed five-class FMD split at $OutputRoot"
+Write-Host "Train: 475 image/mask pairs; test: 25 anonymous image/mask pairs."
