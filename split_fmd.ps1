@@ -27,7 +27,41 @@ foreach ($path in @("train\\image", "train\\mask", "test\\image", "test\\mask", 
 
 $allRows = @()
 $testRows = @()
+
+# Pick five deterministic examples per class, then randomize their anonymous test IDs
+# across all classes. This prevents the test folder's filename order from revealing class blocks.
+$testCandidates = @()
+foreach ($class in $classes) {
+    $imageDirectory = Join-Path $SourceRoot "image\\$class"
+    $images = Get-ChildItem -LiteralPath $imageDirectory -File -Filter "*.jpg" |
+        ForEach-Object {
+            $hashBytes = [System.Security.Cryptography.SHA256]::HashData(
+                [System.Text.Encoding]::UTF8.GetBytes("CSC211-FMD-five-class-v1|$class|$($_.Name)"))
+            [PSCustomObject]@{ File = $_; SortKey = [Convert]::ToHexString($hashBytes) }
+        } |
+        Sort-Object SortKey
+
+    if ($images.Count -ne 100) {
+        throw "Expected 100 images for $class; found $($images.Count)."
+    }
+
+    $testCandidates += ($images | Select-Object -First $testPerClass | ForEach-Object {
+        $orderBytes = [System.Security.Cryptography.SHA256]::HashData(
+            [System.Text.Encoding]::UTF8.GetBytes("CSC211-FMD-five-class-test-order-v1|$class|$($_.File.Name)"))
+        [PSCustomObject]@{
+            Class = $class
+            FileName = $_.File.Name
+            OrderKey = [Convert]::ToHexString($orderBytes)
+        }
+    })
+}
+
+$testNameMap = @{}
 $testNumber = 1
+foreach ($candidate in ($testCandidates | Sort-Object OrderKey)) {
+    $testNameMap["$($candidate.Class)|$($candidate.FileName)"] = "test_{0:D3}.jpg" -f $testNumber
+    $testNumber++
+}
 
 foreach ($class in $classes) {
     $imageDirectory = Join-Path $SourceRoot "image\\$class"
@@ -55,9 +89,10 @@ foreach ($class in $classes) {
         $image = $images[$index].File
         $maskPath = Join-Path $maskDirectory $image.Name
 
-        if ($index -lt $testPerClass) {
+        $testKey = "$class|$($image.Name)"
+        if ($testNameMap.ContainsKey($testKey)) {
             $split = "test"
-            $outputName = "test_{0:D3}.jpg" -f $testNumber
+            $outputName = $testNameMap[$testKey]
             Copy-Item -LiteralPath $image.FullName -Destination (Join-Path $OutputRoot "test\\image\\$outputName")
             Copy-Item -LiteralPath $maskPath -Destination (Join-Path $OutputRoot "test\\mask\\$outputName")
             $testRows += [PSCustomObject]@{
@@ -65,7 +100,6 @@ foreach ($class in $classes) {
                 ground_truth_label = $class
                 original_file = $image.Name
             }
-            $testNumber++
         } else {
             $split = "train"
             $outputName = $image.Name
@@ -87,11 +121,11 @@ foreach ($class in $classes) {
 }
 
 $metadata = Join-Path $OutputRoot "metadata"
-$allRows | Export-Csv -LiteralPath (Join-Path $metadata "split_manifest.csv") -NoTypeInformation
-$testRows | Export-Csv -LiteralPath (Join-Path $metadata "test_labels_private.csv") -NoTypeInformation
-$humanTemplate = $testRows | Select-Object example_id, @{Name = "human_prediction"; Expression = { "" }}, @{Name = "notes"; Expression = { "" }}
-$humanTemplate | Export-Csv -LiteralPath (Join-Path $metadata "human_predictions_yuxiang.csv") -NoTypeInformation
-$humanTemplate | Export-Csv -LiteralPath (Join-Path $metadata "human_predictions_ivans.csv") -NoTypeInformation
+$allRows | Export-Csv -LiteralPath (Join-Path $metadata "split_manifest.csv") -NoTypeInformation -UseQuotes Always
+$testRows | Sort-Object example_id | Export-Csv -LiteralPath (Join-Path $metadata "test_labels_private.csv") -NoTypeInformation -UseQuotes Always
+$humanTemplate = $testRows | Sort-Object example_id | Select-Object example_id, @{Name = "human_prediction"; Expression = { "" }}, @{Name = "notes"; Expression = { "" }}
+$humanTemplate | Export-Csv -LiteralPath (Join-Path $metadata "human_predictions_yuxiang.csv") -NoTypeInformation -UseQuotes Always
+$humanTemplate | Export-Csv -LiteralPath (Join-Path $metadata "human_predictions_ivans.csv") -NoTypeInformation -UseQuotes Always
 
 Write-Host "Created fixed five-class FMD split at $OutputRoot"
 Write-Host "Train: 475 image/mask pairs; test: 25 anonymous image/mask pairs."

@@ -8,12 +8,12 @@ This split contains only five material classes: `leather`, `metal`, `stone`, `wa
 
 - `train/image/<class>/`: 95 training images per class.
 - `train/mask/<class>/`: matching masks; each mask has exactly the same filename as its image.
-- `test/image/`: 25 anonymous test images, named `test_001.jpg` through `test_025.jpg`.
+- `test/image/`: 25 anonymously named, globally shuffled test images.
 - `test/mask/`: matching anonymous masks with the same filenames as the test images.
 
 - `train/image/<class>/`：每类 95 张训练图片。
 - `train/mask/<class>/`：对应的遮罩；每张 mask 与图片文件名完全相同。
-- `test/image/`：25 张匿名测试图片，命名为 `test_001.jpg` 至 `test_025.jpg`。
+- `test/image/`：25 张全局打乱、匿名命名的测试图片。
 - `test/mask/`：与测试图片同名、逐一对应的匿名 mask。
 
 ## Metadata / 元数据
