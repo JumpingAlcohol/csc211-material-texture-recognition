@@ -3,9 +3,11 @@ param(
     [string]$OutputRoot = (Join-Path $PSScriptRoot "FMD_split")
 )
 
-# Fixed CSC211 project scope: five material classes, 95 training and 5 test images per class.
+# Fixed CSC211 scope: 85 training, 10 validation and 5 test pairs per class.
+# For an existing split with human predictions, use add_validation_split.ps1 instead.
 $classes = @("leather", "metal", "stone", "water", "wood")
 $testPerClass = 5
+$validationPerClass = 10
 
 if (Test-Path -LiteralPath $OutputRoot) {
     throw "Output folder already exists: $OutputRoot. Refusing to overwrite an existing split."
@@ -21,7 +23,7 @@ foreach ($class in $classes) {
 }
 
 New-Item -ItemType Directory -Path $OutputRoot | Out-Null
-foreach ($path in @("train\\image", "train\\mask", "test\\image", "test\\mask", "metadata")) {
+foreach ($path in @("train\\image", "train\\mask", "validation\\image", "validation\\mask", "test\\image", "test\\mask", "metadata")) {
     New-Item -ItemType Directory -Path (Join-Path $OutputRoot $path) | Out-Null
 }
 
@@ -102,9 +104,12 @@ foreach ($class in $classes) {
             }
         } else {
             $split = "train"
+            if ($index -lt ($testPerClass + $validationPerClass)) {
+                $split = "validation"
+            }
             $outputName = $image.Name
-            $trainImageDirectory = Join-Path $OutputRoot "train\\image\\$class"
-            $trainMaskDirectory = Join-Path $OutputRoot "train\\mask\\$class"
+            $trainImageDirectory = Join-Path $OutputRoot "$split\\image\\$class"
+            $trainMaskDirectory = Join-Path $OutputRoot "$split\\mask\\$class"
             New-Item -ItemType Directory -Path $trainImageDirectory -Force | Out-Null
             New-Item -ItemType Directory -Path $trainMaskDirectory -Force | Out-Null
             Copy-Item -LiteralPath $image.FullName -Destination (Join-Path $trainImageDirectory $outputName)
@@ -128,4 +133,4 @@ $humanTemplate | Export-Csv -LiteralPath (Join-Path $metadata "human_predictions
 $humanTemplate | Export-Csv -LiteralPath (Join-Path $metadata "human_predictions_ivans.csv") -NoTypeInformation -UseQuotes Always
 
 Write-Host "Created fixed five-class FMD split at $OutputRoot"
-Write-Host "Train: 475 image/mask pairs; test: 25 anonymous image/mask pairs."
+Write-Host "Train: 425 pairs; validation: 50 pairs; test: 25 anonymous pairs."
